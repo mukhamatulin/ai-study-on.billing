@@ -6,6 +6,7 @@ use App\Entity\Course;
 use App\Repository\CourseRepository;
 use App\Service\CurrentUserResolver;
 use App\Service\PaymentService;
+use Doctrine\ORM\EntityManagerInterface;
 use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -30,6 +31,45 @@ class CourseController extends AbstractController
         }
 
         return $this->json($this->serializeCourse($course));
+    }
+
+    #[Route('', name: 'api_courses_create', methods: ['POST'])]
+    public function create(
+        Request $request,
+        CurrentUserResolver $currentUserResolver,
+        EntityManagerInterface $entityManager,
+    ): JsonResponse {
+        $currentUserResolver->denyUnlessAdmin($request);
+        $data = json_decode($request->getContent(), true) ?: $request->request->all();
+
+        $course = new Course();
+        $this->fillCourse($course, $data);
+
+        $entityManager->persist($course);
+        $entityManager->flush();
+
+        return $this->json(['success' => true], 201);
+    }
+
+    #[Route('/{code}', name: 'api_courses_update', methods: ['POST'])]
+    public function update(
+        string $code,
+        Request $request,
+        CourseRepository $courseRepository,
+        CurrentUserResolver $currentUserResolver,
+        EntityManagerInterface $entityManager,
+    ): JsonResponse {
+        $currentUserResolver->denyUnlessAdmin($request);
+        $course = $courseRepository->findOneBy(['code' => $code]);
+        if (!$course) {
+            return $this->json(['code' => 404, 'message' => 'Курс не найден'], 404);
+        }
+
+        $data = json_decode($request->getContent(), true) ?: $request->request->all();
+        $this->fillCourse($course, $data);
+        $entityManager->flush();
+
+        return $this->json(['success' => true]);
     }
 
     #[Route('/{code}/pay', name: 'api_courses_pay', methods: ['POST'])]
@@ -75,4 +115,18 @@ class CourseController extends AbstractController
         return $data;
     }
 
+    private function fillCourse(Course $course, array $data): void
+    {
+        foreach (['type', 'title', 'code'] as $field) {
+            if (empty($data[$field])) {
+                throw new RuntimeException(sprintf('Поле %s обязательно', $field));
+            }
+        }
+
+        $course
+            ->setType($data['type'])
+            ->setTitle($data['title'])
+            ->setCode($data['code'])
+            ->setPrice($data['type'] === Course::TYPE_FREE ? null : (string) ($data['price'] ?? '0.00'));
+    }
 }
